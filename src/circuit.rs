@@ -1,7 +1,7 @@
 use ff::Field;
 use halo2_proofs::circuit::{AssignedCell, Chip, Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::plonk::{
-    Advice, Circuit, Column, ConstraintSystem, ErrorFront, Instance, Selector,
+    Advice, Circuit, Column, ConstraintSystem, ErrorFront, Fixed, Instance, Selector,
 };
 use halo2_proofs::poly::Rotation;
 use std::marker::PhantomData;
@@ -55,6 +55,7 @@ impl<F: Field> ChipChainedEval<F> {
         b_next: Column<Advice>,
         acc_cur: Column<Advice>,
         acc_next: Column<Advice>,
+        constants: Column<Fixed>,
         instance: Column<Instance>,
     ) -> <Self as Chip<F>>::Config {
         meta.enable_equality(a);
@@ -63,6 +64,8 @@ impl<F: Field> ChipChainedEval<F> {
         meta.enable_equality(b_next);
         meta.enable_equality(acc_cur);
         meta.enable_equality(acc_next);
+
+        meta.enable_constant(constants);
 
         meta.enable_equality(instance);
 
@@ -103,8 +106,6 @@ impl<F: Field> ChipChainedEval<F> {
 pub struct CircuitChainedPolyEval<F: Field> {
     pub a: Vec<Value<F>>,
     pub b: Value<F>,
-    pub zero: Value<F>,
-    pub one: Value<F>,
     pub poly_degree: usize,
 }
 
@@ -128,9 +129,13 @@ impl<F: Field> Circuit<F> for CircuitChainedPolyEval<F> {
         let acc_cur = meta.advice_column();
         let acc_next = meta.advice_column();
 
+        let constants = meta.fixed_column();
+
         let instance = meta.instance_column();
 
-        ChipChainedEval::configure(meta, a, b, b_cur, b_next, acc_cur, acc_next, instance)
+        ChipChainedEval::configure(
+            meta, a, b, b_cur, b_next, acc_cur, acc_next, constants, instance,
+        )
     }
 
     fn synthesize(
@@ -147,27 +152,42 @@ impl<F: Field> Circuit<F> for CircuitChainedPolyEval<F> {
         layouter.assign_region(
             || "chained eval",
             |mut region| {
-                let mut val_b_cur = self.one;
-                let mut val_acc_cur = self.zero;
+                let cell_b_cur =
+                    region.assign_advice_from_constant(|| "b_cur", config.b_cur, 0, F::ONE)?;
+                cells_b_cur.push(cell_b_cur.clone());
+                let mut val_b_cur = cell_b_cur.value().copied();
+
+                let cell_acc_cur =
+                    region.assign_advice_from_constant(|| "acc_cur", config.acc_cur, 0, F::ZERO)?;
+                cells_acc_cur.push(cell_acc_cur.clone());
+                let mut val_acc_cur = cell_acc_cur.value().copied();
+
 
                 for i in 0..self.poly_degree {
+                    config.selector_b.enable(&mut region, i)?;
+                    config.selector_acc.enable(&mut region, i)?;
+
                     region.assign_advice(|| "a", config.a, i, || self.a[i])?;
 
                     let cell_b = region.assign_advice(|| "b", config.b, i, || self.b)?;
                     cells_b.push(cell_b);
 
-                    let cell_b_cur =
-                        region.assign_advice(|| "b_cur", config.b_cur, i, || val_b_cur)?;
-                    cells_b_cur.push(cell_b_cur);
+                    if i != 0 {
+                        let cell_b_cur =
+                            region.assign_advice(|| "b_cur", config.b_cur, i, || val_b_cur)?;
+                        cells_b_cur.push(cell_b_cur);
+                    }
 
                     let val_b_next = val_b_cur * self.b;
                     let cell_b_next =
                         region.assign_advice(|| "b_next", config.b_next, i, || val_b_next)?;
                     cells_b_next.push(cell_b_next);
 
-                    let cell_acc_cur =
-                        region.assign_advice(|| "acc_cur", config.acc_cur, i, || val_acc_cur)?;
-                    cells_acc_cur.push(cell_acc_cur);
+                    if i != 0 {
+                        let cell_acc_cur =
+                            region.assign_advice(|| "acc_cur", config.acc_cur, i, || val_acc_cur)?;
+                        cells_acc_cur.push(cell_acc_cur);
+                    }
 
                     let val_acc_next = val_acc_cur + self.a[i] * val_b_cur;
                     let cell_acc_next =
@@ -221,8 +241,6 @@ mod tests {
         let circuit = CircuitChainedPolyEval::<Fr> {
             a: a_vals.iter().map(|&x| Value::known(x)).collect(),
             b: Value::known(b_val),
-            zero: Value::known(Fr::ZERO),
-            one: Value::known(Fr::ONE),
             poly_degree: POLY_DEGREE,
         };
 
@@ -231,7 +249,6 @@ mod tests {
 
         // Set a small k that can handle 4 rows
         let k = 6;
-
 
         let prover = MockProver::run(k, &circuit, vec![public_inputs.clone()]).unwrap();
         assert_eq!(
@@ -243,7 +260,7 @@ mod tests {
         // If we tweak the final sum, it should fail:
         let wrong_sum = sum_val + Fr::ONE;
         let public_inputs_wrong = vec![b_val, wrong_sum];
-        
+
         let prover = MockProver::run(k, &circuit, vec![public_inputs_wrong]).unwrap();
         assert!(prover.verify().is_err(), "Proof should fail with wrong sum");
     }

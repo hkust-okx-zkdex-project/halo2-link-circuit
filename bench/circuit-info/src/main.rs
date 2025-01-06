@@ -1,5 +1,4 @@
 use halo2_link_circuit::circuit::CircuitChainedPolyEval;
-use halo2_proofs::arithmetic::Field;
 use halo2_proofs::circuit::Value;
 use halo2_proofs::halo2curves::bn256::Fr;
 use plotters::prelude::*;
@@ -13,8 +12,6 @@ fn main() {
     let circuit = CircuitChainedPolyEval::<Fr> {
         a: a_vals.iter().map(|&x| Value::known(x)).collect(),
         b: Value::known(b_val),
-        zero: Value::known(Fr::ZERO),
-        one: Value::known(Fr::ONE),
         poly_degree: POLY_DEGREE,
     };
 

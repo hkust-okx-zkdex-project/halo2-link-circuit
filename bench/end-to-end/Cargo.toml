@@ -1,0 +1,10 @@
+[package]
+name = "end-to-end"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rand_core = { version = "0.6", default-features = false, features = ["getrandom"] }
+halo2curves = { version = "0.6.1", default-features = false }
+halo2_proofs = { git = "https://github.com/txaty/halo2.git", branch ="plonk-multi-row" }
+halo2-link-circuit = { path = "../.."}
