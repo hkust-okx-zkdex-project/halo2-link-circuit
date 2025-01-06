@@ -1,7 +1,7 @@
 use ff::Field;
 use halo2_proofs::circuit::{AssignedCell, Chip, Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::plonk::{
-    Advice, Circuit, Column, ConstraintSystem, ErrorFront, Fixed, Instance, Selector,
+    Advice, Circuit, Column, ConstraintSystem, ErrorFront, Instance, Selector,
 };
 use halo2_proofs::poly::Rotation;
 use std::marker::PhantomData;
@@ -40,24 +40,26 @@ impl<F: Field> Chip<F> for ChipChainedEval<F> {
 }
 
 impl<F: Field> ChipChainedEval<F> {
-    // fn construct(config: <Self as Chip<F>>::Config) -> Self {
-    //     Self {
-    //         config,
-    //         _marker: PhantomData,
-    //     }
-    // }
-
     fn configure(
         meta: &mut ConstraintSystem<F>,
-        a: Column<Advice>,
-        b: Column<Advice>,
-        b_cur: Column<Advice>,
-        b_next: Column<Advice>,
-        acc_cur: Column<Advice>,
-        acc_next: Column<Advice>,
-        constants: Column<Fixed>,
-        instance: Column<Instance>,
+        // a: Column<Advice>,
+        // b: Column<Advice>,
+        // b_cur: Column<Advice>,
+        // b_next: Column<Advice>,
+        // acc_cur: Column<Advice>,
+        // acc_next: Column<Advice>,
+        // constants: Column<Fixed>,
+        // instance: Column<Instance>,
     ) -> <Self as Chip<F>>::Config {
+        let a = meta.advice_column();
+        let b = meta.advice_column();
+        let b_cur = meta.advice_column();
+        let b_next = meta.advice_column();
+        let acc_cur = meta.advice_column();
+        let acc_next = meta.advice_column();
+        let constants = meta.fixed_column();
+        let instance = meta.instance_column();
+
         meta.enable_equality(a);
         meta.enable_equality(b);
         meta.enable_equality(b_cur);
@@ -122,20 +124,7 @@ impl<F: Field> Circuit<F> for CircuitChainedPolyEval<F> {
     }
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
-        let a = meta.advice_column();
-        let b = meta.advice_column();
-        let b_cur = meta.advice_column();
-        let b_next = meta.advice_column();
-        let acc_cur = meta.advice_column();
-        let acc_next = meta.advice_column();
-
-        let constants = meta.fixed_column();
-
-        let instance = meta.instance_column();
-
-        ChipChainedEval::configure(
-            meta, a, b, b_cur, b_next, acc_cur, acc_next, constants, instance,
-        )
+        ChipChainedEval::configure(meta)
     }
 
     fn synthesize(
@@ -162,14 +151,20 @@ impl<F: Field> Circuit<F> for CircuitChainedPolyEval<F> {
                 cells_acc_cur.push(cell_acc_cur.clone());
                 let mut val_acc_cur = cell_acc_cur.value().copied();
 
-
                 for i in 0..self.poly_degree {
                     config.selector_b.enable(&mut region, i)?;
                     config.selector_acc.enable(&mut region, i)?;
 
                     region.assign_advice(|| "a", config.a, i, || self.a[i])?;
 
-                    let cell_b = region.assign_advice(|| "b", config.b, i, || self.b)?;
+                    // let cell_b = region.assign_advice(|| "b", config.b, i, || self.b)?;
+                    let cell_b = region.assign_advice_from_instance(
+                        || "b",
+                        config.instance,
+                        0,
+                        config.b,
+                        i,
+                    )?;
                     cells_b.push(cell_b);
 
                     if i != 0 {
@@ -184,8 +179,12 @@ impl<F: Field> Circuit<F> for CircuitChainedPolyEval<F> {
                     cells_b_next.push(cell_b_next);
 
                     if i != 0 {
-                        let cell_acc_cur =
-                            region.assign_advice(|| "acc_cur", config.acc_cur, i, || val_acc_cur)?;
+                        let cell_acc_cur = region.assign_advice(
+                            || "acc_cur",
+                            config.acc_cur,
+                            i,
+                            || val_acc_cur,
+                        )?;
                         cells_acc_cur.push(cell_acc_cur);
                     }
 
@@ -208,19 +207,7 @@ impl<F: Field> Circuit<F> for CircuitChainedPolyEval<F> {
             },
         )?;
 
-        cells_b.iter().enumerate().try_for_each(|(_, cell_b)| {
-            layouter.constrain_instance(cell_b.cell(), config.instance, 0)?;
-
-            layouter.constrain_instance(
-                cells_acc_next.last().unwrap().cell(),
-                config.instance,
-                1,
-            )?;
-
-            Ok(())
-        })?;
-
-        Ok(())
+        layouter.constrain_instance(cells_acc_next.last().unwrap().cell(), config.instance, 1)
     }
 }
 
