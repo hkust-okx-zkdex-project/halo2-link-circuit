@@ -1,0 +1,12 @@
+[package]
+name = "circuit-info"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+plotters = { version = "0.3.0", default-features = false, optional = true }
+halo2_proofs = { git = "https://github.com/txaty/halo2.git", branch ="plonk-multi-row" }
+halo2-link-circuit = { path = "../.."}
+
+[features]
+dev-graph =["halo2_proofs/dev-graph", "halo2_proofs/test-dev-graph", "plotters"]
